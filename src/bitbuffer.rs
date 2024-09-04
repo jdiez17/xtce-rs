@@ -208,12 +208,16 @@ pub struct BitWriter<'a> {
     byte_order: ByteOrder,
 }
 
+pub enum WriteError {
+    BufferTooSmall
+}
+
 impl<'a> BitWriter<'a> {
     pub fn wrap(b: &'a mut [u8]) -> BitWriter<'a> {
         Self { b: b, position: 0, byte_order: ByteOrder::BigEndian }
     }
 
-    pub fn write_bits(&mut self, value: u64, num_bits: usize) {
+    pub fn write_bits(&mut self, value: u64, num_bits: usize) -> Result<(), WriteError> {
         if self.byte_order == ByteOrder::LittleEndian {
             todo!(); // is this actually needed?
         }
@@ -223,7 +227,9 @@ impl<'a> BitWriter<'a> {
         let mut n = num_bits;
         let mut v = value;
 
-        // TODO slice bounds check
+        if byte_pos + n.div_ceil(8) > self.b.len() {
+            return Err(WriteError::BufferTooSmall);
+        }
 
         let fbb = (-(pos as i32) & 0x7) as usize; // how many bits are from position until the end of the byte
         if fbb > 0 {
@@ -234,7 +240,7 @@ impl<'a> BitWriter<'a> {
                 self.b[byte_pos] |= ((v as u8) & mask) << (fbb - n); // set requested bits
                 pos += num_bits;
                 self.position = pos;
-                return;
+                return Ok(());
             } else {
                 let mask = (1 << fbb) - 1;
                 self.b[byte_pos] &= !mask; // clear existing bits that may be set
@@ -260,6 +266,7 @@ impl<'a> BitWriter<'a> {
 
         pos += num_bits;
         self.position = pos;
+        return Ok(())
     }
 
     pub fn set_byte_order(&mut self, byte_order: ByteOrder) {
@@ -286,8 +293,8 @@ mod tests {
         let mut b: [u8; 4] = [0, 0, 0, 0];
         let mut w = BitWriter::wrap(&mut b);
 
-        w.write_bits(5, 3);
-        w.write_bits(0xabcdef, 24);
+        assert!(w.write_bits(5, 3).is_ok());
+        assert!(w.write_bits(0xabcdef, 24).is_ok());
 
         assert_eq!([0xb5, 0x79, 0xbd, 0xe0], b);
 
@@ -295,6 +302,13 @@ mod tests {
 
         assert_eq!(5, bb.get_bits(3));
         assert_eq!(0xabcdef, bb.get_bits(24));
+    }
+
+    #[test]
+    fn test_write_too_big() {
+        let mut b: [u8; 4] = [0, 0, 0, 0];
+        let mut w = BitWriter::wrap(&mut b);
+        assert!(w.write_bits(0x123456789, 37).is_err());
     }
 
     #[test]
